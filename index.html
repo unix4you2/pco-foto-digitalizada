@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Captura de Documento</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+            padding: 0px;
+            box-sizing: border-box;
+        }
+
+        .container {
+            /*background-color: white;*/
+            /*border-radius: 12px;*/
+            /*box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);*/
+            padding: 5px;
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
+        
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            height: 350px; /* Altura fija para mejor visualización */
+            margin: 0 auto 10px;
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .capture-frame {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 135px;
+            height: 167px;
+            border: 3px solid #FF5722;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.85);
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .capture-frame::before {
+            content: '';
+            position: absolute;
+            top: -15px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 15px solid #FF5722;
+        }
+
+        .capture-frame::after {
+            content: 'Captura';
+            position: absolute;
+            top: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #FF5722;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        button {
+            background-color: #FF5722;
+            color: white;
+            border: none;
+            padding: 10px 30px;
+            font-size: 16px;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            font-weight: 600;
+            margin-top: 0px;
+        }
+
+        button:hover {
+            background-color: #E64A19;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status {
+            margin-top: 5px;
+            padding: 5px;
+            border-radius: 5px;
+            display: none;
+            text-align: left;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .permission-message {
+            color: #FF5722;
+            font-weight: bold;
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #fff3e0;
+            border-radius: 8px;
+            border: 1px solid #ffb74d;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="permission-message" id="permissionMessage">
+            Por favor, permite el acceso a la cámara cuando el navegador lo solicite.
+        </div>
+        <div class="camera-container">
+            <video id="video" autoplay playsinline muted></video>
+            <div class="capture-frame"></div>
+        </div>
+        <button id="captureButton" disabled>Capturar</button>
+        <div id="status" class="status"></div>
+        <button id="retryButton" style="display: none; background-color: #4CAF50;">Reintentar cámara</button>
+    </div>
+
+    <script>
+        // Obtener parámetros de la URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const documento = urlParams.get('documento') || 'documento_default';
+        const servidor = urlParams.get('servidor') || 'https://httpbin.org/post'; // Servidor de prueba por defecto
+
+        // Elementos del DOM
+        const video = document.getElementById('video');
+        const captureButton = document.getElementById('captureButton');
+        const statusDiv = document.getElementById('status');
+        const permissionMessage = document.getElementById('permissionMessage');
+        const retryButton = document.getElementById('retryButton');
+
+        // Variable para la transmisión de la cámara
+        let stream = null;
+
+        // Función para iniciar la cámara con mejor manejo de errores
+        async function startCamera() {
+            permissionMessage.style.display = 'block';
+            captureButton.disabled = true;
+            
+            try {
+                // Opciones de configuración para máxima compatibilidad
+                const constraints = {
+                    video: {
+                        facingMode: { ideal: "environment" }, // Intenta usar cámara trasera en móviles
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                // Solicitar acceso a la cámara
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // Asignar el stream al elemento de video
+                video.srcObject = stream;
+                
+                // Habilitar botón de captura cuando el video esté listo
+                video.onloadedmetadata = () => {
+                    console.log('Video metadata loaded');
+                    video.play().catch(e => {
+                        console.warn('Error al reproducir video:', e);
+                    });
+                };
+                
+                // Evento cuando el video realmente comienza a reproducirse
+                video.onplay = () => {
+                    console.log('Video playing');
+                    permissionMessage.style.display = 'none';
+                    captureButton.disabled = false;
+                    retryButton.style.display = 'none';
+                };
+                
+                // Manejar errores de reproducción
+                video.onerror = (e) => {
+                    console.error('Error en video:', e);
+                    showError('Error al iniciar la cámara: ' + (e.message || 'Desconocido'));
+                    retryButton.style.display = 'block';
+                };
+                
+                showSuccess('¡Cámara activada correctamente!');
+                
+            } catch (error) {
+                console.error('Error al acceder a la cámara:', error);
+                
+                let errorMessage = 'No se pudo acceder a la cámara: ';
+                
+                // Manejar diferentes tipos de errores
+                if (error.name === 'NotAllowedError') {
+                    errorMessage += 'Permiso denegado. Por favor, permite el acceso a la cámara.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage += 'No se encontró ninguna cámara.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage += 'La cámara está siendo usada por otra aplicación.';
+                } else if (error.name === 'OverconstrainedError') {
+                    errorMessage += 'No se pudo satisfacer las restricciones de la cámara.';
+                } else if (error.name === 'SecurityError') {
+                    errorMessage += 'Acceso a la cámara bloqueado por razones de seguridad. Asegúrate de usar HTTPS o localhost.';
+                } else {
+                    errorMessage += error.message || 'Error desconocido';
+                }
+                
+                showError(errorMessage);
+                retryButton.style.display = 'block';
+                captureButton.disabled = true;
+            }
+        }
+
+        // Mostrar mensaje de error
+        function showError(message) {
+            console.error(message);
+            statusDiv.textContent = message;
+            statusDiv.className = 'status error';
+            statusDiv.style.display = 'block';
+        }
+
+        // Mostrar mensaje de éxito
+        function showSuccess(message) {
+            statusDiv.textContent = message;
+            statusDiv.className = 'status success';
+            statusDiv.style.display = 'block';
+            
+            // Ocultar después de 5 segundos
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // Mostrar indicador de carga
+        function showLoading() {
+            statusDiv.innerHTML = '<div class="loading"></div> Enviando imagen...';
+            statusDiv.className = 'status';
+            statusDiv.style.display = 'block';
+        }
+
+        // Capturar imagen y enviar al servidor
+        async function captureAndSend() {
+            if (!stream) {
+                showError('La cámara no está disponible');
+                return;
+            }
+
+            try {
+                // Crear un canvas para capturar la imagen
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Establecer dimensiones del canvas según el recuadro de captura
+                canvas.width = 135;
+                canvas.height = 167;
+                
+                // Calcular la escala para recortar correctamente
+                const videoWidth = video.videoWidth;
+                const videoHeight = video.videoHeight;
+                const videoElementWidth = video.offsetWidth;
+                const videoElementHeight = video.offsetHeight;
+                
+                // Calcular la relación de aspecto
+                const videoAspectRatio = videoWidth / videoHeight;
+                const containerAspectRatio = videoElementWidth / videoElementHeight;
+                
+                let drawWidth = videoWidth;
+                let drawHeight = videoHeight;
+                let offsetX = 0;
+                let offsetY = 0;
+                
+                if (videoAspectRatio > containerAspectRatio) {
+                    // El video es más ancho que el contenedor
+                    drawWidth = videoHeight * containerAspectRatio;
+                    offsetX = (videoWidth - drawWidth) / 2;
+                } else {
+                    // El video es más alto que el contenedor
+                    drawHeight = videoWidth / containerAspectRatio;
+                    offsetY = (videoHeight - drawHeight) / 2;
+                }
+                
+                // Calcular la posición del recuadro de captura
+                const frameWidth = 135;
+                const frameHeight = 167;
+                const frameLeft = (videoElementWidth - frameWidth) / 2;
+                const frameTop = (videoElementHeight - frameHeight) / 2;
+                
+                // Calcular la escala entre el elemento de video y el video real
+                const scaleX = drawWidth / videoElementWidth;
+                const scaleY = drawHeight / videoElementHeight;
+                
+                // Calcular las coordenadas de recorte en el video real
+                const cropX = offsetX + frameLeft * scaleX;
+                const cropY = offsetY + frameTop * scaleY;
+                const cropWidth = frameWidth * scaleX;
+                const cropHeight = frameHeight * scaleY;
+                
+                // Dibujar la porción recortada en el canvas
+                ctx.drawImage(
+                    video,
+                    cropX, cropY, cropWidth, cropHeight,  // Fuente (recorte del video)
+                    0, 0, frameWidth, frameHeight  // Destino (canvas)
+                );
+                
+                // Convertir a JPEG
+                canvas.toBlob(async function(blob) {
+                    if (!blob) {
+                        showError('Error al convertir la imagen');
+                        return;
+                    }
+                    
+                    // Mostrar indicador de carga
+                    showLoading();
+                    captureButton.disabled = true;
+                    
+                    // Preparar FormData para enviar
+                    const formData = new FormData();
+                    formData.append('userfile', blob, 'captura.jpg');
+                    formData.append('documento', documento);
+                    
+                    try {
+                        // Enviar al servidor
+                        const response = await fetch(servidor, {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (response.ok) {
+                            const responseData = await response.json().catch(() => ({}));
+                            showSuccess('Imagen enviada correctamente');
+                            console.log('Respuesta del servidor:', responseData);
+                        } else {
+                            throw new Error('Error en la respuesta del servidor: ' + response.status);
+                        }
+                    } catch (error) {
+                        showError('Error al enviar la imagen: ' + error.message);
+                        console.error('Error completo:', error);
+                    } finally {
+                        captureButton.disabled = false;
+                    }
+                }, 'image/jpeg', 0.85);
+                
+            } catch (error) {
+                showError('Error al capturar la imagen: ' + error.message);
+                console.error('Error al capturar:', error);
+            }
+        }
+
+        // Inicializar la aplicación
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Parámetros recibidos - Documento:', documento, 'Servidor:', servidor);
+            
+            // Validar parámetros
+            if (!servidor) {
+                showError('Parámetro "servidor" no especificado. Usando servidor de prueba.');
+            }
+            
+            if (!documento) {
+                console.warn('Parámetro "documento" no especificado. Usando valor por defecto.');
+            }
+            
+            // Iniciar la cámara
+            startCamera();
+            
+            // Configurar eventos de botones
+            captureButton.addEventListener('click', captureAndSend);
+            retryButton.addEventListener('click', startCamera);
+            
+            // Manejar visibilidad de la página (por si el usuario cambia de pestaña)
+            /*
+            document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') {
+                    // Pausar video cuando la pestaña no está visible
+                    if (video.srcObject) {
+                        video.pause();
+                    }
+                } else {
+                    // Reanudar video cuando la pestaña vuelve a ser visible
+                    if (video.srcObject && !video.paused) {
+                        video.play().catch(e => console.warn('Error al reanudar video:', e));
+                    }
+                }
+            });
+            */
+            
+            
+        });
+
+        // Liberar la cámara al cerrar la página
+        window.addEventListener('beforeunload', function() {
+            if (stream) {
+                stream.getTracks().forEach(track => {
+                    track.stop();
+                });
+            }
+        });
+
+        // Agregar un evento para detectar si el usuario deniega el permiso
+        setTimeout(() => {
+            if (captureButton.disabled && !stream) {
+                permissionMessage.style.display = 'block';
+            }
+        }, 5000);
+    </script>
+</body>
+</html>
